@@ -41,80 +41,36 @@ export default async function FETCH_TIKTOK(req, res) {
         }
 
         if (videoId) {
-            try {
-                const webApiUrl = `https://www.tiktok.com/api/item/detail/?itemId=${videoId}`;
-                const webRes = await fetch(webApiUrl, {
-                    headers: {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-                        "Referer": "https://www.tiktok.com/",
-                        "Accept": "application/json, text/plain, */*"
+            const awemeEndpoints = [
+                `https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=26.1.3&app_name=musical_ly&channel=googleplay&device_id=7159781290333275654&device_platform=android&device_type=Pixel%207&os_version=13`,
+                `https://api22-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=26.1.3&app_name=musical_ly&channel=googleplay&device_id=7159781290333275654&device_platform=android&device_type=Pixel%207&os_version=13`,
+                `https://api-t.tiktok.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=26.1.3&app_name=musical_ly&channel=googleplay&device_id=7159781290333275654&device_platform=android&device_type=Pixel%207&os_version=13`
+            ];
+
+            for (const ep of awemeEndpoints) {
+                try {
+                    const awemeRes = await fetch(ep, {
+                        headers: {
+                            "User-Agent": "com.zhiliaoapp.musically/2022601030 (Linux; U; Android 13; en_US; Pixel 7; Build/TQ3A.230901.001; Cronet/58.0.2991.0)",
+                            "Accept-Encoding": "gzip, deflate",
+                            "Connection": "keep-alive"
+                        }
+                    });
+                    const rawText = await awemeRes.text();
+                    if (rawText.startsWith("{")) {
+                        const json = JSON.parse(rawText);
+                        if (json?.aweme_list && json.aweme_list.length > 0) {
+                            return res.status(200).json({
+                                Status: true,
+                                Code: 200,
+                                code: 0,
+                                msg: "success",
+                                data: json.aweme_list[0]
+                            });
+                        }
                     }
-                });
-                const webRaw = await webRes.text();
-                if (webRaw.startsWith("{")) {
-                    const webJson = JSON.parse(webRaw);
-                    const itemDetail = webJson?.itemInfo?.itemStruct;
-                    if (itemDetail) {
-                        return res.status(200).json({
-                            Status: true,
-                            Code: 200,
-                            code: 0,
-                            msg: "success",
-                            data: {
-                                aweme_id: itemDetail.id,
-                                id: itemDetail.id,
-                                desc: itemDetail.desc,
-                                create_time: itemDetail.createTime,
-                                author: {
-                                    unique_id: itemDetail.author?.uniqueId,
-                                    nickname: itemDetail.author?.nickname,
-                                    avatar: itemDetail.author?.avatarLarger
-                                },
-                                music: {
-                                    title: itemDetail.music?.title,
-                                    author: itemDetail.music?.authorName,
-                                    play_url: {
-                                        url_list: [itemDetail.music?.playUrl]
-                                    },
-                                    duration: itemDetail.music?.duration
-                                },
-                                statistics: {
-                                    play_count: itemDetail.stats?.playCount,
-                                    digg_count: itemDetail.stats?.diggCount,
-                                    comment_count: itemDetail.stats?.commentCount,
-                                    share_count: itemDetail.stats?.shareCount,
-                                    collect_count: itemDetail.stats?.collectCount,
-                                    download_count: 0
-                                },
-                                video: {
-                                    width: itemDetail.video?.width,
-                                    height: itemDetail.video?.height,
-                                    ratio: itemDetail.video?.ratio,
-                                    duration: itemDetail.video?.duration,
-                                    bit_rate: (itemDetail.video?.bitrateInfo || []).map(b => ({
-                                        gear_name: b.GearName,
-                                        bit_rate: b.Bitrate,
-                                        quality_type: b.QualityType,
-                                        is_bytevc1: b.CodecType?.includes("bytevc1") ? 1 : 0,
-                                        play_addr: {
-                                            url_list: [b.PlayAddr?.UrlList?.[0]],
-                                            data_size: b.PlayAddr?.DataSize
-                                        }
-                                    })),
-                                    play_addr: {
-                                        url_list: [itemDetail.video?.playAddr]
-                                    }
-                                },
-                                misc_info: JSON.stringify({
-                                    source: "Phone (Gallery)",
-                                    vq_score: itemDetail.video?.VQScore || 0
-                                }),
-                                region: "ID"
-                            }
-                        });
-                    }
-                }
-            } catch (awemeErr) {}
+                } catch (e) {}
+            }
         }
 
         const params = new URLSearchParams({
