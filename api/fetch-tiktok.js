@@ -25,39 +25,96 @@ export default async function FETCH_TIKTOK(req, res) {
         let videoId = null;
         const matchDirect = url.match(/\/video\/(\d+)/) || url.match(/(\d{18,20})/);
         if (matchDirect) {
-          videoId = matchDirect[1];
+            videoId = matchDirect[1];
         } else {
-          const redirectRes = await fetch(url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-            },
-            redirect: "follow"
-          });
-          const finalUrl = redirectRes.url || "";
-          const matchRedirect = finalUrl.match(/\/video\/(\d+)/) || finalUrl.match(/(\d{18,20})/);
-          if (matchRedirect) {
-            videoId = matchRedirect[1];
-          }
+            const redirectRes = await fetch(url, {
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+                },
+                redirect: "follow"
+            });
+            const finalUrl = redirectRes.url || "";
+            const matchRedirect = finalUrl.match(/\/video\/(\d+)/) || finalUrl.match(/(\d{18,20})/);
+            if (matchRedirect) {
+                videoId = matchRedirect[1];
+            }
         }
 
         if (videoId) {
-          const awemeUrl = `https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&iid=7318518857994389254&device_id=7318517321748022790&channel=googleplay&app_name=musical_ly&version_code=300904&device_platform=android&device_type=Pixel%207`;
-          const awemeRes = await fetch(awemeUrl, {
-            headers: {
-              "User-Agent": "com.zhiliaoapp.musically/2022609040 (Linux; U; Android 13; en_US; Pixel 7; Build/TQ3A.230901.001; Cronet/58.0.2991.0)"
-            }
-          });
-          const awemeJson = await awemeRes.json();
-          if (awemeJson?.aweme_list && awemeJson.aweme_list.length > 0) {
-            const item = awemeJson.aweme_list[0];
-            return res.status(200).json({
-              Status: true,
-              Code: 200,
-              code: 0,
-              msg: "success",
-              data: item
-            });
-          }
+            try {
+                const webApiUrl = `https://www.tiktok.com/api/item/detail/?itemId=${videoId}`;
+                const webRes = await fetch(webApiUrl, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                        "Referer": "https://www.tiktok.com/",
+                        "Accept": "application/json, text/plain, */*"
+                    }
+                });
+                const webRaw = await webRes.text();
+                if (webRaw.startsWith("{")) {
+                    const webJson = JSON.parse(webRaw);
+                    const itemDetail = webJson?.itemInfo?.itemStruct;
+                    if (itemDetail) {
+                        return res.status(200).json({
+                            Status: true,
+                            Code: 200,
+                            code: 0,
+                            msg: "success",
+                            data: {
+                                aweme_id: itemDetail.id,
+                                id: itemDetail.id,
+                                desc: itemDetail.desc,
+                                create_time: itemDetail.createTime,
+                                author: {
+                                    unique_id: itemDetail.author?.uniqueId,
+                                    nickname: itemDetail.author?.nickname,
+                                    avatar: itemDetail.author?.avatarLarger
+                                },
+                                music: {
+                                    title: itemDetail.music?.title,
+                                    author: itemDetail.music?.authorName,
+                                    play_url: {
+                                        url_list: [itemDetail.music?.playUrl]
+                                    },
+                                    duration: itemDetail.music?.duration
+                                },
+                                statistics: {
+                                    play_count: itemDetail.stats?.playCount,
+                                    digg_count: itemDetail.stats?.diggCount,
+                                    comment_count: itemDetail.stats?.commentCount,
+                                    share_count: itemDetail.stats?.shareCount,
+                                    collect_count: itemDetail.stats?.collectCount,
+                                    download_count: 0
+                                },
+                                video: {
+                                    width: itemDetail.video?.width,
+                                    height: itemDetail.video?.height,
+                                    ratio: itemDetail.video?.ratio,
+                                    duration: itemDetail.video?.duration,
+                                    bit_rate: (itemDetail.video?.bitrateInfo || []).map(b => ({
+                                        gear_name: b.GearName,
+                                        bit_rate: b.Bitrate,
+                                        quality_type: b.QualityType,
+                                        is_bytevc1: b.CodecType?.includes("bytevc1") ? 1 : 0,
+                                        play_addr: {
+                                            url_list: [b.PlayAddr?.UrlList?.[0]],
+                                            data_size: b.PlayAddr?.DataSize
+                                        }
+                                    })),
+                                    play_addr: {
+                                        url_list: [itemDetail.video?.playAddr]
+                                    }
+                                },
+                                misc_info: JSON.stringify({
+                                    source: "Phone (Gallery)",
+                                    vq_score: itemDetail.video?.VQScore || 0
+                                }),
+                                region: "ID"
+                            }
+                        });
+                    }
+                }
+            } catch (awemeErr) {}
         }
 
         const params = new URLSearchParams({
@@ -74,7 +131,12 @@ export default async function FETCH_TIKTOK(req, res) {
             body: params.toString()
         });
 
-        const json = await response.json();
+        const tikwmRaw = await response.text();
+        if (!tikwmRaw.startsWith("{")) {
+            throw new Error("TikTok upstream provider rate-limited or blocked.");
+        }
+
+        const json = JSON.parse(tikwmRaw);
 
         return res.status(200).json({
             Status: json.code === 0,
