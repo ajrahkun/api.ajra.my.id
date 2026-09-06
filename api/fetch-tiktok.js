@@ -36,25 +36,25 @@ export default async function handler(req, res) {
         let awemeDetail = null;
 
         if (videoId) {
-            const feedEndpoints = [
-                `https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=350103&device_platform=android&aid=1233`,
-                `https://api22-normal-c-alisg.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=350103&device_platform=android&aid=1233`
+            const mobileEndpoints = [
+                `https://api22-normal-c-alisg.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=360104&app_name=musical_ly&channel=googleplay&device_platform=android&device_type=Pixel%207&aid=1233`,
+                `https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=360104&app_name=musical_ly&channel=googleplay&device_platform=android&device_type=Pixel%207&aid=1233`,
+                `https://api-t.tiktok.com/aweme/v1/feed/?aweme_id=${videoId}&aid=1988`
             ];
 
-            for (const endpoint of feedEndpoints) {
+            for (const ep of mobileEndpoints) {
                 try {
-                    const mobileRes = await fetch(endpoint, {
+                    const resp = await fetch(ep, {
                         headers: {
-                            "User-Agent": "com.zhiliaoapp.musically/2022605040 (Linux; U; Android 13; en_US; Pixel 7 Pro; Build/TQ3A.230901.001; Cronet/58.0.2991.0)",
-                            "Accept-Encoding": "gzip, deflate",
+                            "User-Agent": "com.zhiliaoapp.musically/2023501040 (Linux; U; Android 14; en_US; Pixel 7; Build/UP1A.231005.007; Cronet/TTNetVersion:58.0.2991.0)",
                             "Accept": "application/json"
                         }
                     });
-                    const mobileJson = await mobileRes.json();
-                    if (mobileJson && Array.isArray(mobileJson.aweme_list) && mobileJson.aweme_list.length > 0) {
-                        const found = mobileJson.aweme_list.find(a => String(a.aweme_id) === String(videoId)) || mobileJson.aweme_list[0];
-                        if (found && found.video) {
-                            awemeDetail = found;
+                    const resJson = await resp.json();
+                    if (resJson && Array.isArray(resJson.aweme_list) && resJson.aweme_list.length > 0) {
+                        const target = resJson.aweme_list.find(item => String(item.aweme_id) === String(videoId)) || resJson.aweme_list[0];
+                        if (target && target.video && Array.isArray(target.video.bit_rate) && target.video.bit_rate.length > 0) {
+                            awemeDetail = target;
                             break;
                         }
                     }
@@ -64,39 +64,37 @@ export default async function handler(req, res) {
 
         if (awemeDetail) {
             const v = awemeDetail.video || {};
-            const rawBitrates = v.bit_rate || v.bitrate_info || [];
+            const rawBitrates = v.bit_rate || [];
 
             let bitrateList = [];
-            const seenGears = new Set();
+            const seenKeys = new Set();
 
-            if (Array.isArray(rawBitrates) && rawBitrates.length > 0) {
-                rawBitrates.forEach(b => {
-                    const gName = b.gear_name || b.GearName || "";
-                    const rawCodec = (b.codec_type || b.CodecType || "").toLowerCase();
-                    const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
-                    const playUrl = b.play_addr?.url_list?.[0] || b.PlayAddr?.UrlList?.[0] || b.play_url || "";
-                    const dataSize = Number(b.play_addr?.data_size || b.PlayAddr?.DataSize || b.data_size || 0);
-                    const speed = Number(b.bit_rate || b.Bitrate || 0);
+            rawBitrates.forEach(b => {
+                const gName = b.gear_name || "";
+                const rawCodec = (b.codec_type || "").toLowerCase();
+                const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
+                const playUrl = b.play_addr?.url_list?.[0] || "";
+                const dataSize = Number(b.play_addr?.data_size || 0);
+                const speed = Number(b.bit_rate || 0);
 
-                    const dedupeKey = `${gName}_${codec}_${speed}`;
-                    if (!seenGears.has(dedupeKey)) {
-                        seenGears.add(dedupeKey);
-                        bitrateList.push({
-                            gear_name: gName,
-                            bit_rate: speed,
-                            quality_type: Number(b.quality_type || b.QualityType || 0),
-                            codec_type: codec,
-                            play_url: playUrl,
-                            data_size: dataSize
-                        });
-                    }
-                });
-            }
+                const dedupeKey = `${gName}_${codec}_${speed}`;
+                if (!seenKeys.has(dedupeKey)) {
+                    seenKeys.add(dedupeKey);
+                    bitrateList.push({
+                        gear_name: gName,
+                        bit_rate: speed,
+                        quality_type: Number(b.quality_type || 0),
+                        codec_type: codec,
+                        play_url: playUrl,
+                        data_size: dataSize
+                    });
+                }
+            });
 
             if (v.play_addr?.url_list?.[0] && !bitrateList.some(b => b.gear_name === "play_addr")) {
                 bitrateList.push({
                     gear_name: "play_addr",
-                    bit_rate: Number(v.bit_rate?.[0]?.bit_rate || 840000),
+                    bit_rate: Number(bitrateList[0]?.bit_rate || 840000),
                     quality_type: 1,
                     codec_type: "h264",
                     play_url: v.play_addr.url_list[0],
@@ -167,7 +165,7 @@ export default async function handler(req, res) {
                     video: {
                         width: Number(v.width || 720),
                         height: Number(v.height || 1280),
-                        duration: Number(v.duration ? Math.round(v.duration / 1000) : (awemeDetail.duration ? Math.round(awemeDetail.duration / 1000) : 0)),
+                        duration: Number(v.duration ? Math.round(v.duration / 1000) : 0),
                         bit_rate: bitrateList,
                         play_addr: {
                             url_list: [v.play_addr?.url_list?.[0] || bitrateList[0]?.play_url || ""]
