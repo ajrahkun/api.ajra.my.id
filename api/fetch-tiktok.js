@@ -14,13 +14,164 @@ export default async function handler(req, res) {
     if (!url) return res.status(400).json({ error: 'Parameter url wajib diisi' });
 
     try {
+        let videoId = "";
+        const idMatch = url.match(/\/video\/(\d+)/) || url.match(/\/v\/(\d+)/) || url.match(/modal_id=(\d+)/) || url.match(/item_id=(\d+)/);
+        if (idMatch) {
+            videoId = idMatch[1];
+        } else {
+            try {
+                const headRes = await fetch(url, {
+                    method: "GET",
+                    redirect: "follow",
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+                    }
+                });
+                const finalUrl = headRes.url || "";
+                const finalMatch = finalUrl.match(/\/video\/(\d+)/) || finalUrl.match(/\/v\/(\d+)/);
+                if (finalMatch) videoId = finalMatch[1];
+            } catch (e) {}
+        }
+
+        let itemInfo = null;
+
+        if (videoId) {
+            try {
+                const pageRes = await fetch(`https://www.tiktok.com/@i/video/${videoId}`, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.9"
+                    }
+                });
+                const html = await pageRes.text();
+                const scriptMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">([\s\S]*?)<\/script>/);
+                if (scriptMatch && scriptMatch[1]) {
+                    const parsedData = JSON.parse(scriptMatch[1]);
+                    const defaultScope = parsedData?.["__DEFAULT_SCOPE__"];
+                    const detail = defaultScope?.["webapp.video-detail"];
+                    if (detail && detail.itemInfo && detail.itemInfo.itemStruct) {
+                        itemInfo = detail.itemInfo.itemStruct;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        if (itemInfo) {
+            const v = itemInfo.video || {};
+            const rawBitrates = v.bitrateInfo || v.bit_rate || [];
+
+            let bitrateList = [];
+            if (Array.isArray(rawBitrates) && rawBitrates.length > 0) {
+                bitrateList = rawBitrates.map(b => {
+                    const gName = b.GearName || b.gear_name || "";
+                    const rawCodec = (b.CodecType || b.codec_type || "").toLowerCase();
+                    const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
+                    const playUrl = b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "";
+                    const dataSize = Number(b.PlayAddr?.DataSize || b.play_addr?.data_size || b.data_size || 0);
+
+                    return {
+                        gear_name: gName,
+                        bit_rate: Number(b.Bitrate || b.bit_rate || 0),
+                        quality_type: Number(b.QualityType || b.quality_type || 0),
+                        codec_type: codec,
+                        play_url: playUrl,
+                        data_size: dataSize
+                    };
+                });
+            }
+
+            if (v.playAddr && !bitrateList.some(b => b.gear_name === "play_addr")) {
+                bitrateList.push({
+                    gear_name: "play_addr",
+                    bit_rate: Number(v.bitrate || 853000),
+                    quality_type: 1,
+                    codec_type: "h264",
+                    play_url: v.playAddr,
+                    data_size: Number(v.size || 0)
+                });
+            }
+
+            let vqScore = 0;
+            if (v.VQScore !== undefined && v.VQScore !== null) {
+                vqScore = Number(v.VQScore);
+            } else if (v.vq_score !== undefined && v.vq_score !== null) {
+                vqScore = Number(v.vq_score);
+            }
+
+            let detectedSource = "Phone (Gallery)";
+            if (itemInfo.anchors && itemInfo.anchors.some(a => (a.keyword || "").toLowerCase().includes("capcut") || a.type === 28)) {
+                detectedSource = "CapCut";
+            } else if (itemInfo.isDuet) {
+                detectedSource = "Duet";
+            } else if (itemInfo.isStitch) {
+                detectedSource = "Stitch";
+            } else if (bitrateList.some(b => b.gear_name.includes("original_"))) {
+                detectedSource = "Browser";
+            }
+
+            const stats = itemInfo.stats || {};
+            const author = itemInfo.author || {};
+            const music = itemInfo.music || {};
+
+            return res.status(200).json({
+                Status: true,
+                Code: 200,
+                code: 0,
+                msg: "success",
+                data: {
+                    aweme_id: itemInfo.id,
+                    id: itemInfo.id,
+                    desc: itemInfo.desc || "",
+                    create_time: Number(itemInfo.createTime || 0),
+                    region: itemInfo.locationCreated || "ID",
+                    author: {
+                        unique_id: author.uniqueId || "",
+                        nickname: author.nickname || "User"
+                    },
+                    music: {
+                        title: music.title || "original sound",
+                        author: music.authorName || "",
+                        play_url: {
+                            url_list: [music.playUrl || ""]
+                        },
+                        duration: Number(music.duration || 0)
+                    },
+                    statistics: {
+                        play_count: Number(stats.playCount || 0),
+                        digg_count: Number(stats.diggCount || 0),
+                        comment_count: Number(stats.commentCount || 0),
+                        share_count: Number(stats.shareCount || 0),
+                        collect_count: Number(stats.collectCount || 0),
+                        download_count: Number(stats.downloadCount || 0)
+                    },
+                    video: {
+                        width: Number(v.width || 720),
+                        height: Number(v.height || 1280),
+                        duration: Number(v.duration || 0),
+                        bit_rate: bitrateList,
+                        play_addr: {
+                            url_list: [v.playAddr || ""]
+                        }
+                    },
+                    misc_info: JSON.stringify({
+                        source: detectedSource,
+                        vq_score: vqScore
+                    }),
+                    play: v.playAddr || "",
+                    hdplay: bitrateList[0]?.play_url || v.playAddr || "",
+                    size: Number(v.size || 0),
+                    hd_size: bitrateList[0]?.data_size || Number(v.size || 0)
+                }
+            });
+        }
+
         const params = new URLSearchParams({
             url: url,
-            hd: "1",
-            web: "1"
+            hd: "1"
         });
 
-        const response = await fetch("https://www.tikwm.com/api/", {
+        const tikwmRes = await fetch("https://www.tikwm.com/api/", {
             method: "POST",
             headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
@@ -29,7 +180,7 @@ export default async function handler(req, res) {
             body: params.toString()
         });
 
-        const json = await response.json();
+        const json = await tikwmRes.json();
 
         if (json.code === 0 && json.data) {
             const rawItem = json.data.itemStruct || json.data;
@@ -42,36 +193,31 @@ export default async function handler(req, res) {
             const bitrateKbps = duration > 0 ? (sizeBytes * 8) / (duration * 1000) : 0;
 
             const rawBitrates = videoStruct.bitrateInfo || rawItem.video?.bitrateInfo || videoStruct.bit_rate || rawItem.bit_rate || [];
-            
+
             let bitrateList = [];
             if (Array.isArray(rawBitrates) && rawBitrates.length > 0) {
                 bitrateList = rawBitrates.map(b => {
-                    const gName = b.GearName || b.gear_name || "";
-                    const bRate = Number(b.Bitrate || b.bit_rate || 0);
-                    const qType = Number(b.QualityType || b.quality_type || 0);
                     const rawCodec = (b.CodecType || b.codec_type || "").toLowerCase();
                     const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
-                    const playUrl = b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "";
-                    const dataSize = Number(b.PlayAddr?.DataSize || b.play_addr?.data_size || 0);
-
                     return {
-                        gear_name: gName,
-                        bit_rate: bRate,
-                        quality_type: qType,
+                        gear_name: b.GearName || b.gear_name || "",
+                        bit_rate: Number(b.Bitrate || b.bit_rate || 0),
+                        quality_type: Number(b.QualityType || b.quality_type || 0),
                         codec_type: codec,
-                        play_url: playUrl,
-                        data_size: dataSize
+                        play_url: b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "",
+                        data_size: Number(b.PlayAddr?.DataSize || b.play_addr?.data_size || 0)
                     };
                 });
             }
 
             if (bitrateList.length === 0) {
+                const playUrl = json.data.hdplay ? `https://www.tikwm.com${json.data.hdplay.startsWith('/') ? '' : '/'}${json.data.hdplay}` : (json.data.play ? `https://www.tikwm.com${json.data.play.startsWith('/') ? '' : '/'}${json.data.play}` : "");
                 bitrateList.push({
                     gear_name: "play_addr",
                     bit_rate: Math.round(bitrateKbps * 1000),
                     quality_type: 1,
                     codec_type: "h264",
-                    play_url: json.data.hdplay || json.data.play || "",
+                    play_url: playUrl,
                     data_size: sizeBytes
                 });
             }
@@ -83,41 +229,6 @@ export default async function handler(req, res) {
                 vqScore = Number(rawItem.video.VQScore);
             } else if (json.data.vq_score !== undefined && json.data.vq_score !== null) {
                 vqScore = Number(json.data.vq_score);
-            } else if (rawItem.miscInfo) {
-                try {
-                    const parsedMisc = typeof rawItem.miscInfo === 'string' ? JSON.parse(rawItem.miscInfo) : rawItem.miscInfo;
-                    if (parsedMisc && parsedMisc.vq_score !== undefined) {
-                        vqScore = Number(parsedMisc.vq_score);
-                    }
-                } catch (e) {}
-            }
-
-            const hasBytevc1 = bitrateList.some(b => 
-                b.codec_type.includes('bytevc1') || b.gear_name.toLowerCase().includes('bytevc1')
-            );
-            const hasOriginalWebTag = bitrateList.some(b => 
-                b.gear_name.includes('original_')
-            );
-
-            let detectedSource = "Phone (Gallery)";
-
-            const anchors = rawItem.anchors || json.data.anchors || [];
-            const isCapCut = Array.isArray(anchors) && anchors.some(a => 
-                (a.keyword && a.keyword.toLowerCase().includes("capcut")) || 
-                (a.description && a.description.toLowerCase().includes("capcut")) ||
-                a.type === 28
-            );
-
-            if (isCapCut) {
-                detectedSource = "CapCut";
-            } else if (rawItem.is_duet || json.data.is_duet) {
-                detectedSource = "Duet";
-            } else if (rawItem.is_stitch || json.data.is_stitch) {
-                detectedSource = "Stitch";
-            } else if (hasOriginalWebTag || bitrateKbps > 4500 || (!hasBytevc1 && bitrateList.length > 0 && sizeBytes > 10000000)) {
-                detectedSource = "Browser";
-            } else {
-                detectedSource = "Phone (Gallery)";
             }
 
             return res.status(200).json({
@@ -139,7 +250,7 @@ export default async function handler(req, res) {
                         title: json.data.music_info?.title || rawItem.music?.title || "original sound",
                         author: json.data.music_info?.author || rawItem.music?.authorName || "",
                         play_url: {
-                            url_list: [json.data.music || json.data.music_info?.play || ""]
+                            url_list: [json.data.music ? `https://www.tikwm.com${json.data.music.startsWith('/') ? '' : '/'}${json.data.music}` : ""]
                         },
                         duration: json.data.music_info?.duration || json.data.duration || 0
                     },
@@ -157,15 +268,15 @@ export default async function handler(req, res) {
                         duration: json.data.duration || 0,
                         bit_rate: bitrateList,
                         play_addr: {
-                            url_list: [json.data.hdplay || json.data.play]
+                            url_list: [bitrateList[0]?.play_url || ""]
                         }
                     },
                     misc_info: JSON.stringify({
-                        source: detectedSource,
+                        source: "Phone (Gallery)",
                         vq_score: vqScore
                     }),
-                    play: json.data.play,
-                    hdplay: json.data.hdplay,
+                    play: bitrateList[0]?.play_url || "",
+                    hdplay: bitrateList[0]?.play_url || "",
                     size: json.data.size,
                     hd_size: json.data.hd_size
                 }
