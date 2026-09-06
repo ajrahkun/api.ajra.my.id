@@ -9,7 +9,7 @@ export default async function handler(req, res) {
 
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const { url } = req.query;
+    const { url, download, name } = req.query;
     if (!url) return res.status(400).send('URL video diperlukan');
 
     try {
@@ -41,8 +41,12 @@ export default async function handler(req, res) {
         const contentRange = videoResponse.headers.get('content-range');
         const acceptRanges = videoResponse.headers.get('accept-ranges') || 'bytes';
 
+        const fileName = (name ? name : 'tiktok_video') + '.mp4';
+
         res.setHeader('Content-Type', contentType);
         res.setHeader('Accept-Ranges', acceptRanges);
+        res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+
         if (contentLength) res.setHeader('Content-Length', contentLength);
         if (contentRange) res.setHeader('Content-Range', contentRange);
 
@@ -50,6 +54,6 @@ export default async function handler(req, res) {
         return res.end(Buffer.from(arrayBuffer));
 
     } catch (err) {
-        return res.status(500).send('Gagal memutar video: ' + err.message);
+        return res.status(500).send('Gagal memproses stream video: ' + err.message);
     }
 }
