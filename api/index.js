@@ -6,7 +6,8 @@ const ALLOWED_ORIGINS = [
     'https://ajra.my.id',
     'https://www.ajra.my.id',
     'http://localhost:3000',
-    'http://127.0.0.1:5500'
+    'http://127.0.0.1:5500',
+    'http://192.168.1.8:5500'
 ];
 
 export default async function handler(req, res) {
