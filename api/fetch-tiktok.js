@@ -1,6 +1,3 @@
-import axios from 'axios';
-import * as cheerio from 'cheerio';
-
 export const config = {
     runtime: 'nodejs'
 };
@@ -22,25 +19,30 @@ export default async function handler(req, res) {
         res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGINS[0]);
     };
 
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     };
 
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed. Use POST method.' });
+    if (req.method !== 'GET' && req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use GET or POST method.' });
     };
 
-    if (!isAllowed && process.env.NODE_ENV === 'production') {
+    if (origin && !isAllowed && process.env.NODE_ENV === 'production') {
         return res.status(403).json({ error: 'Access denied. Unauthorized origin.' });
     };
 
-    const type = req.body?.type || req.query?.type;
+    let bodyData = {};
+    if (req.body) {
+        bodyData = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    }
+
+    const type = bodyData.type || req.query?.type || (req.query?.url ? 'video' : (req.query?.user ? 'profile' : 'video'));
 
     if (type === 'profile') {
-        const user = req.body?.user || req.query?.user;
+        const user = bodyData.user || req.query?.user;
 
         if (!user) {
             return res.status(400).json({ error: 'Account username is required!' });
@@ -49,13 +51,11 @@ export default async function handler(req, res) {
         const username = user.replace(/^@/, '');
 
         try {
-            const inspect = await axios.get(`https://www.tiktok.com/@${encodeURIComponent(username)}`, {
+            const profileRes = await fetch(`https://www.tiktok.com/@${encodeURIComponent(username)}`, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                    'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Cache-Control': 'max-age=0',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
                     'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
                     'Sec-Ch-Ua-Mobile': '?0',
                     'Sec-Ch-Ua-Platform': '"Windows"',
@@ -64,14 +64,14 @@ export default async function handler(req, res) {
                     'Sec-Fetch-Site': 'none',
                     'Sec-Fetch-User': '?1',
                     'Upgrade-Insecure-Requests': '1'
-                },
-                timeout: 10000
+                }
             });
 
-            const data = cheerio.load(inspect.data)('#__UNIVERSAL_DATA_FOR_REHYDRATION__').text();
+            const html = await profileRes.text();
+            const scriptMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">([\s\S]*?)<\/script>/);
 
-            if (!data) {
-                if (inspect.data.includes('verify-') || inspect.data.includes('captcha')) {
+            if (!scriptMatch || !scriptMatch[1]) {
+                if (html.includes('verify-') || html.includes('captcha')) {
                     return res.status(500).json({
                         error: 'Captcha triggered or request blocked by TikTok.'
                     })
@@ -82,7 +82,8 @@ export default async function handler(req, res) {
                 })
             };
 
-            const result = JSON.parse(data)?.['__DEFAULT_SCOPE__']?.['webapp.user-detail'];
+            const parsed = JSON.parse(scriptMatch[1]);
+            const result = parsed?.['__DEFAULT_SCOPE__']?.['webapp.user-detail'];
 
             if (!result || result.statusCode !== 0) {
                 return res.status(404).json({
@@ -101,7 +102,7 @@ export default async function handler(req, res) {
             })
         }
     } else if (type === 'video') {
-        const url = req.body?.url || req.query?.url;
+        const url = bodyData.url || req.query?.url;
 
         if (!url) return res.status(400).json({ error: 'URL parameter is required' });
 
