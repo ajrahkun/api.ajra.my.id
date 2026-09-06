@@ -5,13 +5,18 @@ export const config = {
 };
 
 const SECRET_KEY = Buffer.from('a1b2c3d4e5f6g7h8a1b2c3d4e5f6g7h8');
-const IV = Buffer.from('1234567890123456');
 
 function ENCRYPT_PAYLOAD(dataObj) {
-    const cipher = crypto.createCipheriv('aes-256-cbc', SECRET_KEY, IV);
-    let encrypted = cipher.update(JSON.stringify(dataObj), 'utf8', 'base64');
-    encrypted += cipher.final('base64');
-    return encrypted;
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', SECRET_KEY, iv);
+    let enc = cipher.update(JSON.stringify(dataObj), 'utf8', 'base64');
+    enc += cipher.final('base64');
+    const tag = cipher.getAuthTag();
+    return JSON.stringify({
+        c: enc,
+        i: iv.toString('base64'),
+        t: tag.toString('base64')
+    });
 }
 
 const ALLOWED_ORIGINS = [
