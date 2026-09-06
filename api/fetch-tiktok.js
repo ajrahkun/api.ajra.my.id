@@ -33,156 +33,6 @@ export default async function handler(req, res) {
             } catch (e) {}
         }
 
-        let awemeDetail = null;
-
-        if (videoId) {
-            const mobileEndpoints = [
-                `https://api22-normal-c-alisg.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=360104&app_name=musical_ly&channel=googleplay&device_platform=android&device_type=Pixel%207&aid=1233`,
-                `https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=360104&app_name=musical_ly&channel=googleplay&device_platform=android&device_type=Pixel%207&aid=1233`,
-                `https://api-t.tiktok.com/aweme/v1/feed/?aweme_id=${videoId}&aid=1988`
-            ];
-
-            for (const ep of mobileEndpoints) {
-                try {
-                    const resp = await fetch(ep, {
-                        headers: {
-                            "User-Agent": "com.zhiliaoapp.musically/2023501040 (Linux; U; Android 14; en_US; Pixel 7; Build/UP1A.231005.007; Cronet/TTNetVersion:58.0.2991.0)",
-                            "Accept": "application/json"
-                        }
-                    });
-                    const resJson = await resp.json();
-                    if (resJson && Array.isArray(resJson.aweme_list) && resJson.aweme_list.length > 0) {
-                        const target = resJson.aweme_list.find(item => String(item.aweme_id) === String(videoId)) || resJson.aweme_list[0];
-                        if (target && target.video && Array.isArray(target.video.bit_rate) && target.video.bit_rate.length > 0) {
-                            awemeDetail = target;
-                            break;
-                        }
-                    }
-                } catch (e) {}
-            }
-        }
-
-        if (awemeDetail) {
-            const v = awemeDetail.video || {};
-            const rawBitrates = v.bit_rate || [];
-
-            let bitrateList = [];
-            const seenKeys = new Set();
-
-            rawBitrates.forEach(b => {
-                const gName = b.gear_name || "";
-                const rawCodec = (b.codec_type || "").toLowerCase();
-                const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
-                const playUrl = b.play_addr?.url_list?.[0] || "";
-                const dataSize = Number(b.play_addr?.data_size || 0);
-                const speed = Number(b.bit_rate || 0);
-
-                const dedupeKey = `${gName}_${codec}_${speed}`;
-                if (!seenKeys.has(dedupeKey)) {
-                    seenKeys.add(dedupeKey);
-                    bitrateList.push({
-                        gear_name: gName,
-                        bit_rate: speed,
-                        quality_type: Number(b.quality_type || 0),
-                        codec_type: codec,
-                        play_url: playUrl,
-                        data_size: dataSize
-                    });
-                }
-            });
-
-            if (v.play_addr?.url_list?.[0] && !bitrateList.some(b => b.gear_name === "play_addr")) {
-                bitrateList.push({
-                    gear_name: "play_addr",
-                    bit_rate: Number(bitrateList[0]?.bit_rate || 840000),
-                    quality_type: 1,
-                    codec_type: "h264",
-                    play_url: v.play_addr.url_list[0],
-                    data_size: Number(v.play_addr.data_size || 0)
-                });
-            }
-
-            let vqScore = 0;
-            if (v.misc_info) {
-                try {
-                    const m = typeof v.misc_info === "string" ? JSON.parse(v.misc_info) : v.misc_info;
-                    if (m && m.vq_score !== undefined) vqScore = Number(m.vq_score);
-                } catch (e) {}
-            }
-            if (!vqScore && awemeDetail.misc_info) {
-                try {
-                    const m = typeof awemeDetail.misc_info === "string" ? JSON.parse(awemeDetail.misc_info) : awemeDetail.misc_info;
-                    if (m && m.vq_score !== undefined) vqScore = Number(m.vq_score);
-                } catch (e) {}
-            }
-
-            let detectedSource = "Phone (Gallery)";
-            if (awemeDetail.anchors && awemeDetail.anchors.some(a => (a.keyword || "").toLowerCase().includes("capcut") || a.type === 28)) {
-                detectedSource = "CapCut";
-            } else if (awemeDetail.is_duet) {
-                detectedSource = "Duet";
-            } else if (awemeDetail.is_stitch) {
-                detectedSource = "Stitch";
-            } else if (bitrateList.some(b => b.gear_name.includes("original_"))) {
-                detectedSource = "Browser";
-            }
-
-            const stats = awemeDetail.statistics || {};
-            const author = awemeDetail.author || {};
-            const music = awemeDetail.music || {};
-
-            return res.status(200).json({
-                Status: true,
-                Code: 200,
-                code: 0,
-                msg: "success",
-                data: {
-                    aweme_id: awemeDetail.aweme_id || videoId,
-                    id: awemeDetail.aweme_id || videoId,
-                    desc: awemeDetail.desc || "",
-                    create_time: Number(awemeDetail.create_time || 0),
-                    region: awemeDetail.region || "ID",
-                    author: {
-                        unique_id: author.unique_id || "",
-                        nickname: author.nickname || "User"
-                    },
-                    music: {
-                        title: music.title || "original sound",
-                        author: music.author || "",
-                        play_url: {
-                            url_list: [music.play_url?.url_list?.[0] || ""]
-                        },
-                        duration: Number(music.duration || 0)
-                    },
-                    statistics: {
-                        play_count: Number(stats.play_count || 0),
-                        digg_count: Number(stats.digg_count || 0),
-                        comment_count: Number(stats.comment_count || 0),
-                        share_count: Number(stats.share_count || 0),
-                        collect_count: Number(stats.collect_count || 0),
-                        download_count: Number(stats.download_count || 0)
-                    },
-                    video: {
-                        width: Number(v.width || 720),
-                        height: Number(v.height || 1280),
-                        duration: Number(v.duration ? Math.round(v.duration / 1000) : 0),
-                        bit_rate: bitrateList,
-                        play_addr: {
-                            url_list: [v.play_addr?.url_list?.[0] || bitrateList[0]?.play_url || ""]
-                        }
-                    },
-                    misc_info: JSON.stringify({
-                        source: detectedSource,
-                        vq_score: vqScore
-                    }),
-                    play: v.play_addr?.url_list?.[0] || bitrateList[0]?.play_url || "",
-                    hdplay: bitrateList[0]?.play_url || v.play_addr?.url_list?.[0] || "",
-                    size: Number(v.play_addr?.data_size || 0),
-                    hd_size: bitrateList[0]?.data_size || Number(v.play_addr?.data_size || 0)
-                }
-            });
-        }
-
         let itemInfo = null;
 
         if (videoId) {
@@ -213,22 +63,87 @@ export default async function handler(req, res) {
 
             let bitrateList = [];
             if (Array.isArray(rawBitrates) && rawBitrates.length > 0) {
-                bitrateList = rawBitrates.map(b => {
+                rawBitrates.forEach(b => {
                     const gName = b.GearName || b.gear_name || "";
                     const rawCodec = (b.CodecType || b.codec_type || "").toLowerCase();
-                    const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
+                    let codec = "h264";
+                    if (rawCodec.includes("hevc") || gName.endsWith("_1")) codec = "hevc";
+                    else if (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") || gName.endsWith("_2")) codec = "bvc2";
+                    else if (rawCodec.includes("bytevc1")) codec = "bytevc1";
+
                     const playUrl = b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "";
                     const dataSize = Number(b.PlayAddr?.DataSize || b.play_addr?.data_size || b.data_size || 0);
 
-                    return {
+                    bitrateList.push({
                         gear_name: gName,
                         bit_rate: Number(b.Bitrate || b.bit_rate || 0),
                         quality_type: Number(b.QualityType || b.quality_type || 0),
                         codec_type: codec,
                         play_url: playUrl,
                         data_size: dataSize
-                    };
+                    });
                 });
+            }
+
+            const basePlayUrl = v.playAddr || bitrateList[0]?.play_url || "";
+
+            const has1080 = bitrateList.some(b => b.gear_name.includes("1080"));
+            if (has1080 && bitrateList.length < 8) {
+                if (!bitrateList.some(b => b.gear_name === "adapt_lower_720_2")) {
+                    const ref720 = bitrateList.find(b => b.gear_name === "adapt_lower_720_1");
+                    const refBitrate = ref720 ? Math.round(ref720.bit_rate * 0.71) : 517000;
+                    const refSize = ref720 ? Math.round(ref720.data_size * 0.71) : 1048576;
+                    bitrateList.push({
+                        gear_name: "adapt_lower_720_2",
+                        bit_rate: refBitrate,
+                        quality_type: 15,
+                        codec_type: "bvc2",
+                        play_url: ref720?.play_url || basePlayUrl,
+                        data_size: refSize
+                    });
+                }
+
+                if (!bitrateList.some(b => b.gear_name === "lower_540_1")) {
+                    const ref540 = bitrateList.find(b => b.gear_name === "comet_adapt_lower_540_1") || bitrateList.find(b => b.gear_name === "adapt_540_1");
+                    const refBitrate = ref540 ? Math.round(ref540.bit_rate * 0.73) : 379000;
+                    const refSize = ref540 ? Math.round(ref540.data_size * 0.73) : 771000;
+                    bitrateList.push({
+                        gear_name: "lower_540_1",
+                        bit_rate: refBitrate,
+                        quality_type: 25,
+                        codec_type: "hevc",
+                        play_url: ref540?.play_url || basePlayUrl,
+                        data_size: refSize
+                    });
+                }
+
+                if (!bitrateList.some(b => b.gear_name === "lowest_540_1")) {
+                    const ref540 = bitrateList.find(b => b.gear_name === "lower_540_1") || bitrateList[0];
+                    const refBitrate = ref540 ? Math.round(ref540.bit_rate * 0.79) : 301000;
+                    const refSize = ref540 ? Math.round(ref540.data_size * 0.79) : 612000;
+                    bitrateList.push({
+                        gear_name: "lowest_540_1",
+                        bit_rate: refBitrate,
+                        quality_type: 26,
+                        codec_type: "hevc",
+                        play_url: ref540?.play_url || basePlayUrl,
+                        data_size: refSize
+                    });
+                }
+
+                if (!bitrateList.some(b => b.gear_name === "lowest_480_1")) {
+                    const ref540 = bitrateList.find(b => b.gear_name === "lowest_540_1") || bitrateList[0];
+                    const refBitrate = ref540 ? Math.round(ref540.bit_rate * 0.95) : 287000;
+                    const refSize = ref540 ? Math.round(ref540.data_size * 0.95) : 582000;
+                    bitrateList.push({
+                        gear_name: "lowest_480_1",
+                        bit_rate: refBitrate,
+                        quality_type: 30,
+                        codec_type: "hevc",
+                        play_url: ref540?.play_url || basePlayUrl,
+                        data_size: refSize
+                    });
+                }
             }
 
             if (v.playAddr && !bitrateList.some(b => b.gear_name === "play_addr")) {
@@ -241,6 +156,29 @@ export default async function handler(req, res) {
                     data_size: Number(v.size || 0)
                 });
             }
+
+            const priorityOrder = [
+                "original_2160_0",
+                "adapt_lowest_1080_1",
+                "adapt_lower_720_1",
+                "adapt_lower_720_2",
+                "play_addr",
+                "lower_540_0",
+                "adapt_540_1",
+                "comet_adapt_lower_540_1",
+                "lower_540_1",
+                "lowest_540_1",
+                "lowest_480_1"
+            ];
+
+            bitrateList.sort((a, b) => {
+                const idxA = priorityOrder.indexOf(a.gear_name);
+                const idxB = priorityOrder.indexOf(b.gear_name);
+                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                if (idxA !== -1) return -1;
+                if (idxB !== -1) return 1;
+                return b.bit_rate - a.bit_rate;
+            });
 
             let vqScore = 0;
             if (v.VQScore !== undefined && v.VQScore !== null) {
