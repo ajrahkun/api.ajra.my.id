@@ -70,7 +70,6 @@ export default async function handler(req, res) {
 
         const playUrl = ensureAbsolute(d.play);
         const hdPlayUrl = ensureAbsolute(d.hdplay) || playUrl;
-        const baseVideoUrl = hdPlayUrl || playUrl;
 
         let videoQualityScore = 66.32;
         let vWidth = d.size_video ? d.size_video[0] : 1080;
@@ -86,7 +85,7 @@ export default async function handler(req, res) {
                 } else if (typeof item.play_addr === 'string') {
                     sUrl = item.play_addr;
                 } else {
-                    sUrl = baseVideoUrl;
+                    sUrl = playUrl;
                 }
                 return {
                     gear_name: item.gear_name || 'lower_540_0',
@@ -97,34 +96,54 @@ export default async function handler(req, res) {
                     fps: item.fps || 60,
                     width: item.width || vWidth,
                     height: item.height || vHeight,
-                    play_url: ensureAbsolute(sUrl)
+                    play_url: sUrl
                 };
             });
         }
 
         const hasGear = (name) => streamList.some(s => s.gear_name === name);
-        const refGear = streamList[0] || {};
-        const refUrl = refGear.play_url || baseVideoUrl;
+        const getStreamByGear = (name) => streamList.find(s => s.gear_name === name);
+
+        const ref540 = getStreamByGear('lower_540_0') || streamList[0] || {};
+        const refBaseUrl = ref540.play_url || playUrl;
 
         const defaultGears = [
-            { gear_name: 'original_2160_0', quality_type: 40, bit_rate: 4500000, codec_type: 'hevc', size: 9500000, fps: 60, width: 2160, height: 3840, play_url: hdPlayUrl },
+            { gear_name: 'original_2160_0', quality_type: 40, bit_rate: 4500000, codec_type: 'hevc', size: 9500000, fps: 60, width: 2160, height: 3840, play_url: (getStreamByGear('adapt_lowest_1080_1') || {}).play_url || hdPlayUrl },
             { gear_name: 'adapt_lowest_1080_1', quality_type: 30, bit_rate: 2600000, codec_type: 'hevc', size: 5500000, fps: 60, width: 1080, height: 1920, play_url: hdPlayUrl },
-            { gear_name: 'adapt_540_1', quality_type: 25, bit_rate: 1800000, codec_type: 'hevc', size: 3800000, fps: 60, width: 720, height: 1280, play_url: playUrl },
-            { gear_name: 'adapt_lower_720_2', quality_type: 24, bit_rate: 1600000, codec_type: 'bytevc1', size: 3400000, fps: 60, width: 720, height: 1280, play_url: playUrl },
-            { gear_name: 'normal_540_1', quality_type: 22, bit_rate: 1400000, codec_type: 'hevc', size: 3000000, fps: 30, width: 576, height: 1024, play_url: playUrl },
-            { gear_name: 'lower_540_0', quality_type: 20, bit_rate: 1200000, codec_type: 'hevc', size: 2600000, fps: 30, width: 576, height: 1024, play_url: playUrl },
-            { gear_name: 'lower_540_1', quality_type: 18, bit_rate: 1000000, codec_type: 'h264', size: 2200000, fps: 30, width: 576, height: 1024, play_url: playUrl },
-            { gear_name: 'lowest_540_1', quality_type: 15, bit_rate: 800000, codec_type: 'h264', size: 1800000, fps: 30, width: 576, height: 1024, play_url: playUrl },
-            { gear_name: 'lowest_480_1', quality_type: 10, bit_rate: 600000, codec_type: 'h264', size: 1400000, fps: 30, width: 480, height: 854, play_url: playUrl }
+            { gear_name: 'adapt_540_1', quality_type: 25, bit_rate: 1800000, codec_type: 'hevc', size: 3800000, fps: 60, width: 720, height: 1280, play_url: refBaseUrl },
+            { gear_name: 'adapt_lower_720_2', quality_type: 24, bit_rate: 1600000, codec_type: 'bytevc1', size: 3400000, fps: 60, width: 720, height: 1280, play_url: refBaseUrl },
+            { gear_name: 'normal_540_1', quality_type: 22, bit_rate: 1400000, codec_type: 'hevc', size: 3000000, fps: 30, width: 576, height: 1024, play_url: refBaseUrl },
+            { gear_name: 'lower_540_0', quality_type: 20, bit_rate: 1200000, codec_type: 'hevc', size: 2600000, fps: 30, width: 576, height: 1024, play_url: refBaseUrl },
+            { gear_name: 'lower_540_1', quality_type: 18, bit_rate: 1000000, codec_type: 'h264', size: 2200000, fps: 30, width: 576, height: 1024, play_url: refBaseUrl },
+            { gear_name: 'lowest_540_1', quality_type: 15, bit_rate: 800000, codec_type: 'h264', size: 1800000, fps: 30, width: 576, height: 1024, play_url: refBaseUrl },
+            { gear_name: 'lowest_480_1', quality_type: 10, bit_rate: 600000, codec_type: 'h264', size: 1400000, fps: 30, width: 480, height: 854, play_url: refBaseUrl }
         ];
 
         defaultGears.forEach(dg => {
             if (!hasGear(dg.gear_name)) {
-                streamList.push({
-                    ...dg,
-                    play_url: dg.play_url || refUrl
-                });
+                streamList.push(dg);
             }
+        });
+
+        const knownOrder = [
+            'original_2160_0',
+            'adapt_lowest_1080_1',
+            'adapt_540_1',
+            'adapt_lower_720_2',
+            'normal_540_1',
+            'lower_540_0',
+            'lower_540_1',
+            'lowest_540_1',
+            'lowest_480_1'
+        ];
+
+        streamList.sort((a, b) => {
+            const idxA = knownOrder.indexOf(a.gear_name);
+            const idxB = knownOrder.indexOf(b.gear_name);
+            if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+            if (idxA !== -1) return -1;
+            if (idxB !== -1) return 1;
+            return (b.width * b.height) - (a.width * a.height);
         });
 
         return res.status(200).json({
