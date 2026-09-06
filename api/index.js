@@ -1,6 +1,18 @@
+import crypto from 'crypto';
+
 export const config = {
     runtime: 'nodejs'
 };
+
+const SECRET_KEY = Buffer.from('a1b2c3d4e5f6g7h8a1b2c3d4e5f6g7h8');
+const IV = Buffer.from('1234567890123456');
+
+function ENCRYPT_PAYLOAD(dataObj) {
+    const cipher = crypto.createCipheriv('aes-256-cbc', SECRET_KEY, IV);
+    let encrypted = cipher.update(JSON.stringify(dataObj), 'utf8', 'base64');
+    encrypted += cipher.final('base64');
+    return encrypted;
+}
 
 const ALLOWED_ORIGINS = [
     'https://ajra.my.id',
@@ -35,8 +47,10 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
         return res.status(200).json({
-            success: true,
-            status: 'online'
+            result: ENCRYPT_PAYLOAD({
+                success: true,
+                status: 'online'
+            })
         });
     }
 
@@ -114,9 +128,11 @@ export default async function handler(req, res) {
             }
 
             return res.status(200).json({
-                success: true,
-                user: result.userInfo.user,
-                stats: result.userInfo.stats
+                result: ENCRYPT_PAYLOAD({
+                    success: true,
+                    user: result.userInfo.user,
+                    stats: result.userInfo.stats
+                })
             });
         } catch (err) {
             return res.status(500).json({
@@ -279,7 +295,7 @@ export default async function handler(req, res) {
             const authorObj = itemInfo?.author || d.author || {};
             const statsObj = itemInfo?.stats || d || {};
 
-            return res.status(200).json({
+            const payloadData = {
                 Status: true,
                 Code: 200,
                 code: 0,
@@ -328,6 +344,10 @@ export default async function handler(req, res) {
                     size: Number(d.size || 0),
                     hd_size: Number(d.hd_size || d.size || 0)
                 }
+            };
+
+            return res.status(200).json({
+                result: ENCRYPT_PAYLOAD(payloadData)
             });
         } catch (err) {
             return res.status(500).json({
