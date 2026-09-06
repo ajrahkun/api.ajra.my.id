@@ -19,15 +19,15 @@ export default async function handler(req, res) {
         res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGINS[0]);
     };
 
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     };
 
-    if (req.method !== 'GET' && req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed. Use GET or POST method.' });
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed. Use POST method.' });
     };
 
     if (origin && !isAllowed && process.env.NODE_ENV === 'production') {
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
         }
     };
 
-    const type = bodyData.type || req.query?.type || (req.query?.url ? 'video' : (req.query?.user ? 'profile' : 'video'));
+    const type = bodyData.type || req.query?.type;
 
     if (type === 'profile') {
         const user = bodyData.user || req.query?.user;
