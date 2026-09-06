@@ -60,10 +60,10 @@ export default async function handler(req, res) {
         const formatMobileCdn = (link) => {
             if (!link) return '';
             return link
-                .replace('v16-webapp-prime.us.tiktok.com', 'v16m.tiktokcdn-us.com')
-                .replace('v19-webapp-prime.us.tiktok.com', 'v19.tiktokcdn-us.com')
-                .replace(/&policy=2/, '')
-                .replace(/&signature=[^&]+/, '');
+                .replace(/v16-webapp-prime\.us\.tiktok\.com/g, 'v16m.tiktokcdn-us.com')
+                .replace(/v19-webapp-prime\.us\.tiktok\.com/g, 'v19.tiktokcdn-us.com')
+                .replace(/&policy=2/g, '')
+                .replace(/&signature=[^&]+/g, '');
         };
 
         if (itemInfo) {
@@ -225,7 +225,7 @@ export default async function handler(req, res) {
             const author = itemInfo.author || {};
             const music = itemInfo.music || {};
 
-            const originMusicUrl = music.playUrl ? music.playUrl.replace('v16-webapp-prime.us.tiktok.com', 'v16-ies-music.tiktokcdn-us.com') : "";
+            const originMusicUrl = music.playUrl ? music.playUrl.replace(/v16-webapp-prime\.us\.tiktok\.com/g, 'v16-ies-music.tiktokcdn-us.com') : "";
 
             return res.status(200).json({
                 Status: true,
