@@ -33,6 +33,30 @@ export default async function handler(req, res) {
             } catch (e) {}
         }
 
+        let itemInfo = null;
+
+        if (videoId) {
+            try {
+                const pageRes = await fetch(`https://www.tiktok.com/@i/video/${videoId}`, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.9"
+                    }
+                });
+                const html = await pageRes.text();
+                const scriptMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">([\s\S]*?)<\/script>/);
+                if (scriptMatch && scriptMatch[1]) {
+                    const parsedData = JSON.parse(scriptMatch[1]);
+                    const defaultScope = parsedData?.["__DEFAULT_SCOPE__"];
+                    const detail = defaultScope?.["webapp.video-detail"];
+                    if (detail && detail.itemInfo && detail.itemInfo.itemStruct) {
+                        itemInfo = detail.itemInfo.itemStruct;
+                    }
+                }
+            } catch (e) {}
+        }
+
         const params = new URLSearchParams({
             url: url,
             hd: "1"
@@ -48,16 +72,7 @@ export default async function handler(req, res) {
         });
 
         const json = await tikwmRes.json();
-
-        if (!json || json.code !== 0 || !json.data) {
-            return res.status(404).json({
-                Status: false,
-                msg: "Gagal mengambil data video dari TikTok"
-            });
-        }
-
-        const d = json.data;
-        const vId = d.id || videoId;
+        const d = json.data || {};
 
         const fixUrl = (link) => {
             if (!link) return '';
@@ -69,39 +84,78 @@ export default async function handler(req, res) {
         const standardPlayUrl = fixUrl(d.play);
         const hdPlayUrl = fixUrl(d.hdplay) || standardPlayUrl;
 
-        const vWidth = d.size_video ? d.size_video[0] : (d.width || 1080);
-        const vHeight = d.size_video ? d.size_video[1] : (d.height || 1920);
-        const duration = Number(d.duration) || 1;
-        const sizeBytes = Number(d.hd_size) || Number(d.size) || 15000000;
-        const normalSizeBytes = Number(d.size) || Math.round(sizeBytes * 0.6);
+        let bitrateList = [];
+        let vqScore = 65.71;
+        let detectedSource = "Phone (Gallery)";
 
-        const hdBitrate = Math.round((sizeBytes * 8) / duration);
-        const normalBitrate = Math.round((normalSizeBytes * 8) / duration);
+        if (itemInfo) {
+            const v = itemInfo.video || {};
+            const rawBitrates = v.bitrateInfo || v.bit_rate || [];
 
-        const streamList = [
-            {
-                gear_name: "play_addr",
-                quality_type: 1,
-                bit_rate: normalBitrate,
-                codec_type: "h264",
-                size: normalSizeBytes,
-                fps: 30,
-                width: vWidth > vHeight ? 1024 : 576,
-                height: vWidth > vHeight ? 576 : 1024,
-                play_url: standardPlayUrl
-            },
-            {
-                gear_name: "original_1080_0",
-                quality_type: 10,
-                bit_rate: hdBitrate,
-                codec_type: "h264",
-                size: sizeBytes,
-                fps: 60,
-                width: vWidth,
-                height: vHeight,
-                play_url: hdPlayUrl
+            if (Array.isArray(rawBitrates) && rawBitrates.length > 0) {
+                rawBitrates.forEach(b => {
+                    const gName = b.GearName || b.gear_name || "";
+                    const rawCodec = (b.CodecType || b.codec_type || "").toLowerCase();
+                    let codec = "h264";
+                    if (rawCodec.includes("hevc") || gName.endsWith("_1")) codec = "hevc";
+                    else if (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") || gName.endsWith("_2")) codec = "bvc2";
+                    else if (rawCodec.includes("bytevc1")) codec = "bytevc1";
+
+                    const isHd = gName.includes('1080') || gName.includes('720') || gName.includes('2160');
+                    const targetPlayUrl = isHd ? hdPlayUrl : standardPlayUrl;
+                    const dataSize = Number(b.PlayAddr?.DataSize || b.play_addr?.data_size || b.data_size || 0);
+
+                    bitrateList.push({
+                        gear_name: gName,
+                        bit_rate: Number(b.Bitrate || b.bit_rate || 0),
+                        quality_type: Number(b.QualityType || b.quality_type || 0),
+                        codec_type: codec,
+                        play_url: targetPlayUrl,
+                        data_size: dataSize
+                    });
+                });
             }
-        ];
+
+            if (v.VQScore !== undefined && v.VQScore !== null) {
+                vqScore = Number(v.VQScore);
+            } else if (v.vq_score !== undefined && v.vq_score !== null) {
+                vqScore = Number(v.vq_score);
+            }
+
+            if (itemInfo.anchors && itemInfo.anchors.some(a => (a.keyword || "").toLowerCase().includes("capcut") || a.type === 28)) {
+                detectedSource = "CapCut";
+            } else if (itemInfo.isDuet) {
+                detectedSource = "Duet";
+            } else if (itemInfo.isStitch) {
+                detectedSource = "Stitch";
+            } else if (bitrateList.some(b => b.gear_name.includes("original_"))) {
+                detectedSource = "Browser";
+            }
+        }
+
+        if (bitrateList.length === 0) {
+            bitrateList = [
+                {
+                    gear_name: "play_addr",
+                    bit_rate: Math.round(((Number(d.size) || 15000000) * 8) / (Number(d.duration) || 1)),
+                    quality_type: 1,
+                    codec_type: "h264",
+                    play_url: standardPlayUrl,
+                    data_size: Number(d.size || 0)
+                },
+                {
+                    gear_name: "original_1080_0",
+                    bit_rate: Math.round(((Number(d.hd_size) || 25000000) * 8) / (Number(d.duration) || 1)),
+                    quality_type: 10,
+                    codec_type: "h264",
+                    play_url: hdPlayUrl,
+                    data_size: Number(d.hd_size || d.size || 0)
+                }
+            ];
+        }
+
+        const authorObj = itemInfo?.author || d.author || {};
+        const statsObj = itemInfo?.stats || d || {};
 
         return res.status(200).json({
             Status: true,
@@ -109,49 +163,48 @@ export default async function handler(req, res) {
             code: 0,
             msg: "success",
             data: {
-                aweme_id: String(vId),
-                id: String(vId),
-                desc: d.title || "",
-                create_time: Number(d.create_time) || Math.floor(Date.now() / 1000),
-                region: d.region || "ID",
+                aweme_id: String(videoId || d.id || "0"),
+                id: String(videoId || d.id || "0"),
+                desc: itemInfo?.desc || d.title || "",
+                create_time: Number(itemInfo?.createTime || d.create_time || Math.floor(Date.now() / 1000)),
+                region: itemInfo?.locationCreated || d.region || "ID",
                 author: {
-                    unique_id: d.author?.unique_id || "",
-                    nickname: d.author?.nickname || "User"
+                    unique_id: authorObj.uniqueId || authorObj.unique_id || "",
+                    nickname: authorObj.nickname || "User"
                 },
                 music: {
-                    title: d.music_info?.title || "original sound",
-                    author: d.music_info?.author || "",
+                    title: itemInfo?.music?.title || d.music_info?.title || "original sound",
+                    author: itemInfo?.music?.authorName || d.music_info?.author || "",
                     play_url: {
                         url_list: [fixUrl(d.music || d.music_info?.play)]
                     },
-                    duration: Number(d.music_info?.duration) || duration
+                    duration: Number(itemInfo?.music?.duration || d.duration || 0)
                 },
                 statistics: {
-                    play_count: Number(d.play_count) || 0,
-                    digg_count: Number(d.digg_count) || 0,
-                    comment_count: Number(d.comment_count) || 0,
-                    share_count: Number(d.share_count) || 0,
-                    collect_count: Number(d.collect_count) || 0,
-                    download_count: Number(d.download_count) || 0
+                    play_count: Number(statsObj.playCount || statsObj.play_count || 0),
+                    digg_count: Number(statsObj.diggCount || statsObj.digg_count || 0),
+                    comment_count: Number(statsObj.commentCount || statsObj.comment_count || 0),
+                    share_count: Number(statsObj.shareCount || statsObj.share_count || 0),
+                    collect_count: Number(statsObj.collectCount || statsObj.collect_count || 0),
+                    download_count: Number(statsObj.downloadCount || statsObj.download_count || 0)
                 },
                 video: {
-                    width: vWidth,
-                    height: vHeight,
-                    duration: duration,
-                    bit_rate: streamList,
+                    width: Number(itemInfo?.video?.width || d.width || 576),
+                    height: Number(itemInfo?.video?.height || d.height || 1024),
+                    duration: Number(itemInfo?.video?.duration || d.duration || 1),
+                    bit_rate: bitrateList,
                     play_addr: {
                         url_list: [standardPlayUrl]
                     }
                 },
-                cover: fixUrl(d.cover),
-                origin_cover: fixUrl(d.origin_cover || d.cover),
+                misc_info: JSON.stringify({
+                    source: detectedSource,
+                    vq_score: vqScore
+                }),
                 play: standardPlayUrl,
                 hdplay: hdPlayUrl,
-                original_resolution: `${vWidth}x${vHeight}`,
-                vq_score: 66.32,
-                browser_quality: "576p30",
-                phone_quality: "1080p60",
-                stream_list: streamList
+                size: Number(d.size || 0),
+                hd_size: Number(d.hd_size || d.size || 0)
             }
         });
 
