@@ -9,14 +9,9 @@ const SECRET_KEY = Buffer.from('a1b2c3d4e5f6g7h8a1b2c3d4e5f6g7h8');
 function ENCRYPT_PAYLOAD(dataObj) {
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', SECRET_KEY, iv);
-    let enc = cipher.update(JSON.stringify(dataObj), 'utf8', 'base64');
-    enc += cipher.final('base64');
+    const encrypted = Buffer.concat([cipher.update(JSON.stringify(dataObj), 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
-    return JSON.stringify({
-        c: enc,
-        i: iv.toString('base64'),
-        t: tag.toString('base64')
-    });
+    return Buffer.concat([iv, tag, encrypted]).toString('hex');
 }
 
 const ALLOWED_ORIGINS = [
