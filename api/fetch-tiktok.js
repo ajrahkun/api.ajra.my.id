@@ -59,6 +59,48 @@ export default async function FETCH_TIKTOK(req, res) {
                 }));
             }
 
+            const anchors = rawItem.anchors || json.data.anchors || [];
+            const isCapCut = Array.isArray(anchors) && anchors.some(a => 
+                (a.keyword && a.keyword.toLowerCase().includes("capcut")) || 
+                (a.description && a.description.toLowerCase().includes("capcut")) ||
+                (a.name && a.name.toLowerCase().includes("capcut")) ||
+                a.type === 28
+            );
+
+            const isDuet = Boolean(rawItem.is_duet || rawItem.duet_info?.duet_origin_item_id || json.data.is_duet);
+            const isStitch = Boolean(rawItem.is_stitch || rawItem.stitch_info || json.data.is_stitch);
+            const isLive = Boolean(rawItem.is_live_replay || rawItem.item_source === "live");
+
+            let determinedSource = "Phone (Gallery)";
+
+            if (isCapCut) {
+                determinedSource = "CapCut";
+            } else if (isDuet) {
+                determinedSource = "Duet";
+            } else if (isStitch) {
+                determinedSource = "Stitch";
+            } else if (isLive) {
+                determinedSource = "Live Highlight";
+            } else {
+                const shootWay = rawItem.shoot_way ?? rawItem.shoot_tab ?? videoStruct.shoot_way;
+                if (shootWay !== undefined && shootWay !== null) {
+                    const sWay = String(shootWay).toLowerCase();
+                    if (sWay === "1" || sWay === "camera" || sWay === "direct") {
+                        determinedSource = "Phone (Camera)";
+                    } else if (sWay === "0" || sWay === "gallery" || sWay === "import") {
+                        determinedSource = "Phone (Gallery)";
+                    }
+                } else {
+                    const isMobileAspect = (videoStruct.height || 1920) >= (videoStruct.width || 1080);
+                    const isWebUpload = rawItem.create_scene === "web" || rawItem.item_source === "web";
+                    if (isWebUpload && !isMobileAspect) {
+                        determinedSource = "Browser";
+                    } else {
+                        determinedSource = "Phone (Gallery)";
+                    }
+                }
+            }
+
             return res.status(200).json({
                 Status: true,
                 Code: 200,
@@ -100,7 +142,7 @@ export default async function FETCH_TIKTOK(req, res) {
                         }
                     },
                     misc_info: JSON.stringify({
-                        source: bitrateList.length > 1 ? "Phone (Gallery)" : "Browser",
+                        source: determinedSource,
                         vq_score: videoStruct.VQScore || 0
                     }),
                     play: json.data.play,
