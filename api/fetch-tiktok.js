@@ -57,6 +57,14 @@ export default async function handler(req, res) {
             } catch (e) {}
         }
 
+        const host = req.headers['host'] || 'api.ajra.my.id';
+        const protocol = req.headers['x-forwarded-proto'] || 'https';
+        const proxyStream = (origUrl) => {
+            if (!origUrl) return '';
+            if (origUrl.startsWith('/')) return `${protocol}://${host}${origUrl}`;
+            return `${protocol}://${host}/api/stream?url=${encodeURIComponent(origUrl)}`;
+        };
+
         if (itemInfo) {
             const v = itemInfo.video || {};
             const rawBitrates = v.bitrateInfo || v.bit_rate || [];
@@ -71,7 +79,7 @@ export default async function handler(req, res) {
                     else if (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") || gName.endsWith("_2")) codec = "bvc2";
                     else if (rawCodec.includes("bytevc1")) codec = "bytevc1";
 
-                    const playUrl = b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "";
+                    const rawPlayUrl = b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "";
                     const dataSize = Number(b.PlayAddr?.DataSize || b.play_addr?.data_size || b.data_size || 0);
 
                     bitrateList.push({
@@ -79,13 +87,13 @@ export default async function handler(req, res) {
                         bit_rate: Number(b.Bitrate || b.bit_rate || 0),
                         quality_type: Number(b.QualityType || b.quality_type || 0),
                         codec_type: codec,
-                        play_url: playUrl,
+                        play_url: proxyStream(rawPlayUrl),
                         data_size: dataSize
                     });
                 });
             }
 
-            const basePlayUrl = v.playAddr || bitrateList[0]?.play_url || "";
+            const basePlayUrl = v.playAddr || (rawBitrates[0]?.PlayAddr?.UrlList?.[0]) || "";
 
             const has1080 = bitrateList.some(b => b.gear_name.includes("1080"));
             if (has1080 && bitrateList.length < 8) {
@@ -98,7 +106,7 @@ export default async function handler(req, res) {
                         bit_rate: refBitrate,
                         quality_type: 15,
                         codec_type: "bvc2",
-                        play_url: ref720?.play_url || basePlayUrl,
+                        play_url: ref720?.play_url || proxyStream(basePlayUrl),
                         data_size: refSize
                     });
                 }
@@ -112,7 +120,7 @@ export default async function handler(req, res) {
                         bit_rate: refBitrate,
                         quality_type: 25,
                         codec_type: "hevc",
-                        play_url: ref540?.play_url || basePlayUrl,
+                        play_url: ref540?.play_url || proxyStream(basePlayUrl),
                         data_size: refSize
                     });
                 }
@@ -126,7 +134,7 @@ export default async function handler(req, res) {
                         bit_rate: refBitrate,
                         quality_type: 26,
                         codec_type: "hevc",
-                        play_url: ref540?.play_url || basePlayUrl,
+                        play_url: ref540?.play_url || proxyStream(basePlayUrl),
                         data_size: refSize
                     });
                 }
@@ -140,7 +148,7 @@ export default async function handler(req, res) {
                         bit_rate: refBitrate,
                         quality_type: 30,
                         codec_type: "hevc",
-                        play_url: ref540?.play_url || basePlayUrl,
+                        play_url: ref540?.play_url || proxyStream(basePlayUrl),
                         data_size: refSize
                     });
                 }
@@ -152,7 +160,7 @@ export default async function handler(req, res) {
                     bit_rate: Number(v.bitrate || 853000),
                     quality_type: 1,
                     codec_type: "h264",
-                    play_url: v.playAddr,
+                    play_url: proxyStream(v.playAddr),
                     data_size: Number(v.size || 0)
                 });
             }
@@ -239,15 +247,15 @@ export default async function handler(req, res) {
                         duration: Number(v.duration || 0),
                         bit_rate: bitrateList,
                         play_addr: {
-                            url_list: [v.playAddr || ""]
+                            url_list: [proxyStream(v.playAddr)]
                         }
                     },
                     misc_info: JSON.stringify({
                         source: detectedSource,
                         vq_score: vqScore
                     }),
-                    play: v.playAddr || "",
-                    hdplay: bitrateList[0]?.play_url || v.playAddr || "",
+                    play: proxyStream(v.playAddr),
+                    hdplay: bitrateList[0]?.play_url || proxyStream(v.playAddr),
                     size: Number(v.size || 0),
                     hd_size: bitrateList[0]?.data_size || Number(v.size || 0)
                 }
@@ -287,12 +295,13 @@ export default async function handler(req, res) {
                 bitrateList = rawBitrates.map(b => {
                     const rawCodec = (b.CodecType || b.codec_type || "").toLowerCase();
                     const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
+                    const rawPlayUrl = b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "";
                     return {
                         gear_name: b.GearName || b.gear_name || "",
                         bit_rate: Number(b.Bitrate || b.bit_rate || 0),
                         quality_type: Number(b.QualityType || b.quality_type || 0),
                         codec_type: codec,
-                        play_url: b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "",
+                        play_url: proxyStream(rawPlayUrl),
                         data_size: Number(b.PlayAddr?.DataSize || b.play_addr?.data_size || 0)
                     };
                 });
@@ -305,7 +314,7 @@ export default async function handler(req, res) {
                     bit_rate: Math.round(bitrateKbps * 1000),
                     quality_type: 1,
                     codec_type: "h264",
-                    play_url: playUrl,
+                    play_url: proxyStream(playUrl),
                     data_size: sizeBytes
                 });
             }
