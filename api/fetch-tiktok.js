@@ -2,7 +2,7 @@ export const config = {
     runtime: 'nodejs'
 };
 
-export default async function FETCH_TIKTOK(req, res) {
+export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -14,18 +14,17 @@ export default async function FETCH_TIKTOK(req, res) {
     }
 
     if (req.method !== 'GET') {
-        return res.status(405).json({ error: 'Method not allowed. Use GET method.' });
+        return res.status(405).json({ error: 'Method not allowed' });
     }
 
     if (!url) {
-        return res.status(400).json({ error: 'TikTok URL parameter is required.' });
+        return res.status(400).json({ error: 'Parameter url wajib diisi' });
     }
 
     try {
         const params = new URLSearchParams({
             url: url,
-            hd: "1",
-            web: "1"
+            hd: "1"
         });
 
         const response = await fetch("https://www.tikwm.com/api/", {
@@ -43,62 +42,27 @@ export default async function FETCH_TIKTOK(req, res) {
             const rawItem = json.data.itemStruct || json.data;
             const videoStruct = rawItem.video || json.data;
 
-            let bitrateList = [];
-            if (videoStruct.bitrateInfo && Array.isArray(videoStruct.bitrateInfo)) {
-                bitrateList = videoStruct.bitrateInfo.map(b => ({
-                    gear_name: b.GearName || "",
-                    bit_rate: b.Bitrate || 0,
-                    quality_type: b.QualityType || 0,
-                    is_bytevc1: (b.CodecType || "").includes("bytevc1") ? 1 : 0,
-                    is_h265: (b.CodecType || "").includes("hevc") || (b.CodecType || "").includes("h265") ? 1 : 0,
-                    codec_type: b.CodecType || "h264",
-                    play_addr: {
-                        url_list: b.PlayAddr?.UrlList || [json.data.play],
-                        data_size: b.PlayAddr?.DataSize || json.data.size || 0
-                    }
-                }));
-            }
+            const width = Number(videoStruct.width || 720);
+            const height = Number(videoStruct.height || 1280);
 
+            let detectedSource = "Phone (Gallery)";
             const anchors = rawItem.anchors || json.data.anchors || [];
             const isCapCut = Array.isArray(anchors) && anchors.some(a => 
                 (a.keyword && a.keyword.toLowerCase().includes("capcut")) || 
                 (a.description && a.description.toLowerCase().includes("capcut")) ||
-                (a.name && a.name.toLowerCase().includes("capcut")) ||
                 a.type === 28
             );
 
-            const isDuet = Boolean(rawItem.is_duet || rawItem.duet_info?.duet_origin_item_id || json.data.is_duet);
-            const isStitch = Boolean(rawItem.is_stitch || rawItem.stitch_info || json.data.is_stitch);
-            const isLive = Boolean(rawItem.is_live_replay || rawItem.item_source === "live");
-
-            let determinedSource = "Phone (Gallery)";
-
             if (isCapCut) {
-                determinedSource = "CapCut";
-            } else if (isDuet) {
-                determinedSource = "Duet";
-            } else if (isStitch) {
-                determinedSource = "Stitch";
-            } else if (isLive) {
-                determinedSource = "Live Highlight";
+                detectedSource = "CapCut";
+            } else if (rawItem.is_duet || json.data.is_duet) {
+                detectedSource = "Duet";
+            } else if (rawItem.is_stitch || json.data.is_stitch) {
+                detectedSource = "Stitch";
+            } else if (width > height) {
+                detectedSource = "Browser";
             } else {
-                const shootWay = rawItem.shoot_way ?? rawItem.shoot_tab ?? videoStruct.shoot_way;
-                if (shootWay !== undefined && shootWay !== null) {
-                    const sWay = String(shootWay).toLowerCase();
-                    if (sWay === "1" || sWay === "camera" || sWay === "direct") {
-                        determinedSource = "Phone (Camera)";
-                    } else if (sWay === "0" || sWay === "gallery" || sWay === "import") {
-                        determinedSource = "Phone (Gallery)";
-                    }
-                } else {
-                    const isMobileAspect = (videoStruct.height || 1920) >= (videoStruct.width || 1080);
-                    const isWebUpload = rawItem.create_scene === "web" || rawItem.item_source === "web";
-                    if (isWebUpload && !isMobileAspect) {
-                        determinedSource = "Browser";
-                    } else {
-                        determinedSource = "Phone (Gallery)";
-                    }
-                }
+                detectedSource = "Phone (Gallery)";
             }
 
             return res.status(200).json({
@@ -133,17 +97,16 @@ export default async function FETCH_TIKTOK(req, res) {
                         download_count: json.data.download_count || 0
                     },
                     video: {
-                        width: videoStruct.width || 1080,
-                        height: videoStruct.height || 1920,
+                        width: width,
+                        height: height,
                         duration: json.data.duration || 0,
-                        bit_rate: bitrateList,
                         play_addr: {
                             url_list: [json.data.hdplay || json.data.play]
                         }
                     },
                     misc_info: JSON.stringify({
-                        source: determinedSource,
-                        vq_score: videoStruct.VQScore || 0
+                        source: detectedSource,
+                        vq_score: 0
                     }),
                     play: json.data.play,
                     hdplay: json.data.hdplay,
@@ -154,17 +117,16 @@ export default async function FETCH_TIKTOK(req, res) {
         }
 
         return res.status(200).json({
-            Status: json.code === 0,
-            Code: json.code === 0 ? 200 : json.code,
-            ...json
+            Status: false,
+            Code: json.code || 400,
+            msg: json.msg || "Gagal mengambil data video TikTok"
         });
+
     } catch (err) {
         return res.status(500).json({
             Status: false,
             Code: 500,
-            code: 500,
-            msg: err.message,
-            data: null
+            msg: err.message
         });
     }
 }
