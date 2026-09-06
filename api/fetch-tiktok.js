@@ -36,8 +36,16 @@ export default async function handler(req, res) {
 
     let bodyData = {};
     if (req.body) {
-        bodyData = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    }
+        if (typeof req.body === 'object') {
+            bodyData = req.body;
+        } else if (typeof req.body === 'string' && req.body.trim().length > 0) {
+            try {
+                bodyData = JSON.parse(req.body);
+            } catch (e) {
+                bodyData = {};
+            }
+        }
+    };
 
     const type = bodyData.type || req.query?.type || (req.query?.url ? 'video' : (req.query?.user ? 'profile' : 'video'));
 
@@ -164,7 +172,14 @@ export default async function handler(req, res) {
                 body: params.toString()
             });
 
-            const json = await tikwmRes.json();
+            const tikwmText = await tikwmRes.text();
+            let json = {};
+            try {
+                json = JSON.parse(tikwmText);
+            } catch (e) {
+                json = {};
+            }
+
             const d = json.data || {};
 
             const fixUrl = (link) => {
