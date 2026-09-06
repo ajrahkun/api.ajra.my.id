@@ -16,7 +16,8 @@ export default async function handler(req, res) {
     try {
         const params = new URLSearchParams({
             url: url,
-            hd: "1"
+            hd: "1",
+            web: "1"
         });
 
         const response = await fetch("https://www.tikwm.com/api/", {
@@ -34,18 +35,68 @@ export default async function handler(req, res) {
             const rawItem = json.data.itemStruct || json.data;
             const videoStruct = rawItem.video || json.data;
 
-            const width = Number(videoStruct.width || 720);
-            const height = Number(videoStruct.height || 1280);
-            const duration = Number(json.data.duration || 1);
+            const width = Number(videoStruct.width || json.data.width || 720);
+            const height = Number(videoStruct.height || json.data.height || 1280);
+            const duration = Number(json.data.duration || videoStruct.duration || 1);
             const sizeBytes = Number(json.data.hd_size || json.data.size || 0);
             const bitrateKbps = duration > 0 ? (sizeBytes * 8) / (duration * 1000) : 0;
 
-            const bitrates = videoStruct.bitrateInfo || [];
-            const hasBytevc1 = bitrates.some(b => 
-                (b.CodecType || b.codec_type || b.GearName || '').toLowerCase().includes('bytevc1')
+            const rawBitrates = videoStruct.bitrateInfo || rawItem.video?.bitrateInfo || videoStruct.bit_rate || rawItem.bit_rate || [];
+            
+            let bitrateList = [];
+            if (Array.isArray(rawBitrates) && rawBitrates.length > 0) {
+                bitrateList = rawBitrates.map(b => {
+                    const gName = b.GearName || b.gear_name || "";
+                    const bRate = Number(b.Bitrate || b.bit_rate || 0);
+                    const qType = Number(b.QualityType || b.quality_type || 0);
+                    const rawCodec = (b.CodecType || b.codec_type || "").toLowerCase();
+                    const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
+                    const playUrl = b.PlayAddr?.UrlList?.[0] || b.play_addr?.url_list?.[0] || b.play_url || "";
+                    const dataSize = Number(b.PlayAddr?.DataSize || b.play_addr?.data_size || 0);
+
+                    return {
+                        gear_name: gName,
+                        bit_rate: bRate,
+                        quality_type: qType,
+                        codec_type: codec,
+                        play_url: playUrl,
+                        data_size: dataSize
+                    };
+                });
+            }
+
+            if (bitrateList.length === 0) {
+                bitrateList.push({
+                    gear_name: "play_addr",
+                    bit_rate: Math.round(bitrateKbps * 1000),
+                    quality_type: 1,
+                    codec_type: "h264",
+                    play_url: json.data.hdplay || json.data.play || "",
+                    data_size: sizeBytes
+                });
+            }
+
+            let vqScore = 0;
+            if (videoStruct.VQScore !== undefined && videoStruct.VQScore !== null) {
+                vqScore = Number(videoStruct.VQScore);
+            } else if (rawItem.video?.VQScore !== undefined && rawItem.video?.VQScore !== null) {
+                vqScore = Number(rawItem.video.VQScore);
+            } else if (json.data.vq_score !== undefined && json.data.vq_score !== null) {
+                vqScore = Number(json.data.vq_score);
+            } else if (rawItem.miscInfo) {
+                try {
+                    const parsedMisc = typeof rawItem.miscInfo === 'string' ? JSON.parse(rawItem.miscInfo) : rawItem.miscInfo;
+                    if (parsedMisc && parsedMisc.vq_score !== undefined) {
+                        vqScore = Number(parsedMisc.vq_score);
+                    }
+                } catch (e) {}
+            }
+
+            const hasBytevc1 = bitrateList.some(b => 
+                b.codec_type.includes('bytevc1') || b.gear_name.toLowerCase().includes('bytevc1')
             );
-            const hasOriginalWebTag = bitrates.some(b => 
-                (b.GearName || '').includes('original_') || (b.gear_name || '').includes('original_')
+            const hasOriginalWebTag = bitrateList.some(b => 
+                b.gear_name.includes('original_')
             );
 
             let detectedSource = "Phone (Gallery)";
@@ -63,7 +114,7 @@ export default async function handler(req, res) {
                 detectedSource = "Duet";
             } else if (rawItem.is_stitch || json.data.is_stitch) {
                 detectedSource = "Stitch";
-            } else if (hasOriginalWebTag || bitrateKbps > 4500 || (!hasBytevc1 && bitrates.length > 0 && sizeBytes > 10000000)) {
+            } else if (hasOriginalWebTag || bitrateKbps > 4500 || (!hasBytevc1 && bitrateList.length > 0 && sizeBytes > 10000000)) {
                 detectedSource = "Browser";
             } else {
                 detectedSource = "Phone (Gallery)";
@@ -104,13 +155,14 @@ export default async function handler(req, res) {
                         width: width,
                         height: height,
                         duration: json.data.duration || 0,
+                        bit_rate: bitrateList,
                         play_addr: {
                             url_list: [json.data.hdplay || json.data.play]
                         }
                     },
                     misc_info: JSON.stringify({
                         source: detectedSource,
-                        vq_score: 0
+                        vq_score: vqScore
                     }),
                     play: json.data.play,
                     hdplay: json.data.hdplay,
