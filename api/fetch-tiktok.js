@@ -33,6 +33,158 @@ export default async function handler(req, res) {
             } catch (e) {}
         }
 
+        let awemeDetail = null;
+
+        if (videoId) {
+            const feedEndpoints = [
+                `https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=350103&device_platform=android&aid=1233`,
+                `https://api22-normal-c-alisg.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}&version_code=350103&device_platform=android&aid=1233`
+            ];
+
+            for (const endpoint of feedEndpoints) {
+                try {
+                    const mobileRes = await fetch(endpoint, {
+                        headers: {
+                            "User-Agent": "com.zhiliaoapp.musically/2022605040 (Linux; U; Android 13; en_US; Pixel 7 Pro; Build/TQ3A.230901.001; Cronet/58.0.2991.0)",
+                            "Accept-Encoding": "gzip, deflate",
+                            "Accept": "application/json"
+                        }
+                    });
+                    const mobileJson = await mobileRes.json();
+                    if (mobileJson && Array.isArray(mobileJson.aweme_list) && mobileJson.aweme_list.length > 0) {
+                        const found = mobileJson.aweme_list.find(a => String(a.aweme_id) === String(videoId)) || mobileJson.aweme_list[0];
+                        if (found && found.video) {
+                            awemeDetail = found;
+                            break;
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+
+        if (awemeDetail) {
+            const v = awemeDetail.video || {};
+            const rawBitrates = v.bit_rate || v.bitrate_info || [];
+
+            let bitrateList = [];
+            const seenGears = new Set();
+
+            if (Array.isArray(rawBitrates) && rawBitrates.length > 0) {
+                rawBitrates.forEach(b => {
+                    const gName = b.gear_name || b.GearName || "";
+                    const rawCodec = (b.codec_type || b.CodecType || "").toLowerCase();
+                    const codec = rawCodec.includes("hevc") ? "hevc" : (rawCodec.includes("bytevc2") || rawCodec.includes("bvc2") ? "bvc2" : (rawCodec.includes("bytevc1") ? "bytevc1" : "h264"));
+                    const playUrl = b.play_addr?.url_list?.[0] || b.PlayAddr?.UrlList?.[0] || b.play_url || "";
+                    const dataSize = Number(b.play_addr?.data_size || b.PlayAddr?.DataSize || b.data_size || 0);
+                    const speed = Number(b.bit_rate || b.Bitrate || 0);
+
+                    const dedupeKey = `${gName}_${codec}_${speed}`;
+                    if (!seenGears.has(dedupeKey)) {
+                        seenGears.add(dedupeKey);
+                        bitrateList.push({
+                            gear_name: gName,
+                            bit_rate: speed,
+                            quality_type: Number(b.quality_type || b.QualityType || 0),
+                            codec_type: codec,
+                            play_url: playUrl,
+                            data_size: dataSize
+                        });
+                    }
+                });
+            }
+
+            if (v.play_addr?.url_list?.[0] && !bitrateList.some(b => b.gear_name === "play_addr")) {
+                bitrateList.push({
+                    gear_name: "play_addr",
+                    bit_rate: Number(v.bit_rate?.[0]?.bit_rate || 840000),
+                    quality_type: 1,
+                    codec_type: "h264",
+                    play_url: v.play_addr.url_list[0],
+                    data_size: Number(v.play_addr.data_size || 0)
+                });
+            }
+
+            let vqScore = 0;
+            if (v.misc_info) {
+                try {
+                    const m = typeof v.misc_info === "string" ? JSON.parse(v.misc_info) : v.misc_info;
+                    if (m && m.vq_score !== undefined) vqScore = Number(m.vq_score);
+                } catch (e) {}
+            }
+            if (!vqScore && awemeDetail.misc_info) {
+                try {
+                    const m = typeof awemeDetail.misc_info === "string" ? JSON.parse(awemeDetail.misc_info) : awemeDetail.misc_info;
+                    if (m && m.vq_score !== undefined) vqScore = Number(m.vq_score);
+                } catch (e) {}
+            }
+
+            let detectedSource = "Phone (Gallery)";
+            if (awemeDetail.anchors && awemeDetail.anchors.some(a => (a.keyword || "").toLowerCase().includes("capcut") || a.type === 28)) {
+                detectedSource = "CapCut";
+            } else if (awemeDetail.is_duet) {
+                detectedSource = "Duet";
+            } else if (awemeDetail.is_stitch) {
+                detectedSource = "Stitch";
+            } else if (bitrateList.some(b => b.gear_name.includes("original_"))) {
+                detectedSource = "Browser";
+            }
+
+            const stats = awemeDetail.statistics || {};
+            const author = awemeDetail.author || {};
+            const music = awemeDetail.music || {};
+
+            return res.status(200).json({
+                Status: true,
+                Code: 200,
+                code: 0,
+                msg: "success",
+                data: {
+                    aweme_id: awemeDetail.aweme_id || videoId,
+                    id: awemeDetail.aweme_id || videoId,
+                    desc: awemeDetail.desc || "",
+                    create_time: Number(awemeDetail.create_time || 0),
+                    region: awemeDetail.region || "ID",
+                    author: {
+                        unique_id: author.unique_id || "",
+                        nickname: author.nickname || "User"
+                    },
+                    music: {
+                        title: music.title || "original sound",
+                        author: music.author || "",
+                        play_url: {
+                            url_list: [music.play_url?.url_list?.[0] || ""]
+                        },
+                        duration: Number(music.duration || 0)
+                    },
+                    statistics: {
+                        play_count: Number(stats.play_count || 0),
+                        digg_count: Number(stats.digg_count || 0),
+                        comment_count: Number(stats.comment_count || 0),
+                        share_count: Number(stats.share_count || 0),
+                        collect_count: Number(stats.collect_count || 0),
+                        download_count: Number(stats.download_count || 0)
+                    },
+                    video: {
+                        width: Number(v.width || 720),
+                        height: Number(v.height || 1280),
+                        duration: Number(v.duration ? Math.round(v.duration / 1000) : (awemeDetail.duration ? Math.round(awemeDetail.duration / 1000) : 0)),
+                        bit_rate: bitrateList,
+                        play_addr: {
+                            url_list: [v.play_addr?.url_list?.[0] || bitrateList[0]?.play_url || ""]
+                        }
+                    },
+                    misc_info: JSON.stringify({
+                        source: detectedSource,
+                        vq_score: vqScore
+                    }),
+                    play: v.play_addr?.url_list?.[0] || bitrateList[0]?.play_url || "",
+                    hdplay: bitrateList[0]?.play_url || v.play_addr?.url_list?.[0] || "",
+                    size: Number(v.play_addr?.data_size || 0),
+                    hd_size: bitrateList[0]?.data_size || Number(v.play_addr?.data_size || 0)
+                }
+            });
+        }
+
         let itemInfo = null;
 
         if (videoId) {
