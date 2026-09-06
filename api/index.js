@@ -7,11 +7,32 @@ export const config = {
 const SECRET_KEY = Buffer.from('a1b2c3d4e5f6g7h8a1b2c3d4e5f6g7h8');
 
 function ENCRYPT_PAYLOAD(dataObj) {
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', SECRET_KEY, iv);
-    const encrypted = Buffer.concat([cipher.update(JSON.stringify(dataObj), 'utf8'), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    return Buffer.concat([iv, tag, encrypted]).toString('hex');
+    const key = 'a1b2c3d4e5f6g7h8a1b2c3d4e5f6g7h8';
+    const text = JSON.stringify(dataObj);
+    const s = [];
+    for (let i = 0; i < 256; i++) s[i] = i;
+    let j = 0;
+    for (let i = 0; i < 256; i++) {
+        j = (j + s[i] + key.charCodeAt(i % key.length)) % 256;
+        const temp = s[i];
+        s[i] = s[j];
+        s[j] = temp;
+    }
+    let i = 0;
+    j = 0;
+    let hex = '';
+    const bytes = Buffer.from(text, 'utf8');
+    for (let x = 0; x < bytes.length; x++) {
+        i = (i + 1) % 256;
+        j = (j + s[i]) % 256;
+        const temp = s[i];
+        s[i] = s[j];
+        s[j] = temp;
+        const k = s[(s[i] + s[j]) % 256];
+        const val = bytes[x] ^ k;
+        hex += val < 16 ? '0' + val.toString(16) : val.toString(16);
+    }
+    return hex;
 }
 
 const ALLOWED_ORIGINS = [
