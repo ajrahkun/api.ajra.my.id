@@ -9,17 +9,9 @@ export default async function handler(req, res) {
 
     const { url } = req.query;
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-
-    if (req.method !== 'GET') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
-
-    if (!url) {
-        return res.status(400).json({ error: 'Parameter url wajib diisi' });
-    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
+    if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+    if (!url) return res.status(400).json({ error: 'Parameter url wajib diisi' });
 
     try {
         const params = new URLSearchParams({
@@ -44,8 +36,20 @@ export default async function handler(req, res) {
 
             const width = Number(videoStruct.width || 720);
             const height = Number(videoStruct.height || 1280);
+            const duration = Number(json.data.duration || 1);
+            const sizeBytes = Number(json.data.hd_size || json.data.size || 0);
+            const bitrateKbps = duration > 0 ? (sizeBytes * 8) / (duration * 1000) : 0;
+
+            const bitrates = videoStruct.bitrateInfo || [];
+            const hasBytevc1 = bitrates.some(b => 
+                (b.CodecType || b.codec_type || b.GearName || '').toLowerCase().includes('bytevc1')
+            );
+            const hasOriginalWebTag = bitrates.some(b => 
+                (b.GearName || '').includes('original_') || (b.gear_name || '').includes('original_')
+            );
 
             let detectedSource = "Phone (Gallery)";
+
             const anchors = rawItem.anchors || json.data.anchors || [];
             const isCapCut = Array.isArray(anchors) && anchors.some(a => 
                 (a.keyword && a.keyword.toLowerCase().includes("capcut")) || 
@@ -59,7 +63,7 @@ export default async function handler(req, res) {
                 detectedSource = "Duet";
             } else if (rawItem.is_stitch || json.data.is_stitch) {
                 detectedSource = "Stitch";
-            } else if (width > height) {
+            } else if (hasOriginalWebTag || bitrateKbps > 4500 || (!hasBytevc1 && bitrates.length > 0 && sizeBytes > 10000000)) {
                 detectedSource = "Browser";
             } else {
                 detectedSource = "Phone (Gallery)";
