@@ -10,36 +10,42 @@ const ALLOWED_ORIGINS = [
 ];
 
 export default async function handler(req, res) {
-    const origin = req.headers.origin || req.headers.referer || '';
-    const isAllowed = ALLOWED_ORIGINS.some(allowed => origin.startsWith(allowed));
+    const rawOrigin = req.headers.origin || '';
+    const rawReferer = req.headers.referer || '';
 
-    if (isAllowed) {
-        res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    const isAllowed = !rawOrigin || ALLOWED_ORIGINS.some(allowed => 
+        rawOrigin.startsWith(allowed) || rawReferer.startsWith(allowed) || rawOrigin.includes('ajra.my.id')
+    );
+
+    if (rawOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', rawOrigin);
     } else {
-        res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGINS[0]);
-    };
+        res.setHeader('Access-Control-Allow-Origin', '*');
+    }
 
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+    res.setHeader('Access-Control-Max-Age', '86400');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
-    };
+    }
 
     if (req.method === 'GET') {
         return res.status(200).json({
             success: true,
             status: 'online'
         });
-    };
+    }
 
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed. Use POST method.' });
-    };
+    }
 
-    if (origin && !isAllowed && process.env.NODE_ENV === 'production') {
+    if (rawOrigin && !isAllowed && process.env.NODE_ENV === 'production') {
         return res.status(403).json({ error: 'Access denied. Unauthorized origin.' });
-    };
+    }
 
     let bodyData = {};
     if (req.body) {
@@ -52,7 +58,7 @@ export default async function handler(req, res) {
                 bodyData = {};
             }
         }
-    };
+    }
 
     const type = bodyData.type || req.query?.type;
 
@@ -61,7 +67,7 @@ export default async function handler(req, res) {
 
         if (!user) {
             return res.status(400).json({ error: 'Account username is required!' });
-        };
+        }
 
         const username = user.replace(/^@/, '');
 
@@ -89,13 +95,13 @@ export default async function handler(req, res) {
                 if (html.includes('verify-') || html.includes('captcha')) {
                     return res.status(500).json({
                         error: 'Captcha triggered or request blocked by TikTok.'
-                    })
-                };
+                    });
+                }
 
                 return res.status(500).json({
                     error: 'Data not found. The internal structure may have changed.'
-                })
-            };
+                });
+            }
 
             const parsed = JSON.parse(scriptMatch[1]);
             const result = parsed?.['__DEFAULT_SCOPE__']?.['webapp.user-detail'];
@@ -103,18 +109,18 @@ export default async function handler(req, res) {
             if (!result || result.statusCode !== 0) {
                 return res.status(404).json({
                     error: result?.statusMsg || 'Account not found or structure changed.'
-                })
-            };
+                });
+            }
 
             return res.status(200).json({
                 success: true,
                 user: result.userInfo.user,
                 stats: result.userInfo.stats
-            })
+            });
         } catch (err) {
             return res.status(500).json({
                 error: err.message
-            })
+            });
         }
     } else if (type === 'video') {
         const url = bodyData.url || req.query?.url;
@@ -163,7 +169,7 @@ export default async function handler(req, res) {
                         }
                     }
                 } catch (e) {}
-            };
+            }
 
             const params = new URLSearchParams({
                 url: url,
@@ -227,9 +233,9 @@ export default async function handler(req, res) {
                             codec_type: codec,
                             play_url: targetPlayUrl,
                             data_size: dataSize
-                        })
-                    })
-                };
+                        });
+                    });
+                }
 
                 if (v.VQScore !== undefined && v.VQScore !== null) {
                     vqScore = Number(v.VQScore);
@@ -246,7 +252,7 @@ export default async function handler(req, res) {
                 } else if (bitrateList.some(b => b.gear_name.includes("original_"))) {
                     detectedSource = "Browser";
                 }
-            };
+            }
 
             if (bitrateList.length === 0) {
                 bitrateList = [
@@ -266,8 +272,8 @@ export default async function handler(req, res) {
                         play_url: hdPlayUrl,
                         data_size: Number(d.hd_size || d.size || 0)
                     }
-                ]
-            };
+                ];
+            }
 
             const authorObj = itemInfo?.author || d.author || {};
             const statsObj = itemInfo?.stats || d || {};
@@ -321,7 +327,7 @@ export default async function handler(req, res) {
                     size: Number(d.size || 0),
                     hd_size: Number(d.hd_size || d.size || 0)
                 }
-            })
+            });
         } catch (err) {
             return res.status(500).json({
                 Status: false,
@@ -329,9 +335,9 @@ export default async function handler(req, res) {
                 code: 500,
                 msg: err.message,
                 data: null
-            })
+            });
         }
     } else {
         return res.status(400).json({ error: 'Invalid type parameter. Use "video" or "profile".' });
     }
-};
+}
